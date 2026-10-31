@@ -1,5 +1,5 @@
 {
-  description = "A very basic flake";
+  description = "Guessless DevShell";
 
   inputs = {
     nixpkgs.url = "https://channels.nixos.org/nixpkgs-unstable/nixexprs.tar.zst";
@@ -17,7 +17,6 @@
 
         shellHook = ''
         echo "-- Entered DevShell --"
-        exec fish
         '';
       };
     }) inputs.nixpkgs.legacyPackages;
