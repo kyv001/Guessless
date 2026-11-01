@@ -52,7 +52,7 @@ WIN_COLOR, WIN_SUB, LOSE_COLOR = "#43a047", "#81c784", "#e53935"
 ROW_HIGHLIGHT = "#1565c0"
 NUM_COLORS = {1: "#1976d2", 2: "#2e7d32", 3: "#d32f2f", 4: "#6a1b9a",
               5: "#ef6c00", 6: "#00838f", 7: "#37474f", 8: "#000000"}
-# 爆炸复盘：必安 / 必雷 / 不确定 三色填色
+# 爆炸复盘：安全 / 必雷 / 不确定 三色填色
 MARKER_FILLS = {"safe": "#66bb6a", "mine": "#ef5350", "uncertain": "#ffca28"}
 MARKER_EDGES = {"safe": "#1b5e20", "mine": "#b71c1c", "uncertain": "#e65100"}
 EXPLODED_FILL, EXPLODED_EDGE = "#b71c1c", "#4a0000"
@@ -60,7 +60,7 @@ HINT_PENALTY = 5.0  # 每次提示的罚时（秒）
 HINT_COLOR, HINT_HOVER = "#ef6c00", "#f57c00"  # 提示生效时的按钮底色
 REASON_TEXT = {
     "must_be_mine": "点到了必雷格",
-    "safe_move_exists": "存在必安格，却点了非必安格",
+    "safe_move_exists": "存在安全格，却点了非安全格",
     "must_guess_frontier": "前沿还有不确定格，却点了内陆格",
 }
 
@@ -148,7 +148,7 @@ def loss_reason(result: SolveResult, position: Position) -> str:
 
 
 def classify_hidden(game: Minesweeper, result: SolveResult) -> dict[Position, str]:
-    """把所有仍未翻开的格子分成 必安 / 必雷 / 不确定 三类。"""
+    """把所有仍未翻开的格子分成 安全 / 必雷 / 不确定 三类。"""
     must_mine, must_safe = set(result.must_be_mine), set(result.must_be_safe)
     cannot_deter, inland = set(result.cannot_deter), set(result.unsolved_positions)
     extras = [solution.n_extra_mines for solution in result.solutions]
@@ -231,7 +231,7 @@ def describe_loss(analysis: LossAnalysis) -> tuple[str, str]:
         else:
             limit = "限制：由总雷数决定"
     elif analysis.reason == "safe_move_exists":
-        limit = f"规则：有必安格时必须点必安格（当时 {analysis.safe_count} 个）"
+        limit = f"规则：有安全格时必须点安全格（当时 {analysis.safe_count} 个）"
     elif analysis.reason == "must_guess_frontier":
         limit = "规则：前沿还有不确定格时，只能在前沿猜"
     else:
@@ -968,7 +968,7 @@ class GuesslessApp:
             return
         square = self._px(10)
         cursor = x
-        for color, label, count in ((MARKER_FILLS["safe"], "必安", analysis.safe_count),
+        for color, label, count in ((MARKER_FILLS["safe"], "安全", analysis.safe_count),
                                     (MARKER_FILLS["mine"], "必雷", analysis.mine_count),
                                     (MARKER_FILLS["uncertain"], "不确定", analysis.uncertain_count)):
             text = f"{label} {count}"
