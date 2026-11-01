@@ -48,3 +48,37 @@
 ```bash
 uv run pytest -q
 ```
+
+
+## 图形界面
+
+在装有依赖的项目目录里：
+
+```bash
+uv run python -m guessless.ui      # 也可以直接运行：python src/guessless/ui.py
+```
+
+界面沿用参考实现的配色与触摸手感，并补齐桌面端操作：
+
+- **触摸**：轻点翻开；长按 0.45 秒插旗；右上角 `Dig` / `Flag` 切换点击模式。
+- **鼠标**：左键翻开；右键插旗（不受当前模式影响）；点击已翻开的数字，旗数吻合时和弦展开。
+- **计时**：顶部实时显示用时，结束后冻结；获胜时用当前昵称记入排行榜。
+- **爆炸复盘**：踩雷后，未翻开的格子整格填色为绿（必安）／红（必雷）／琥珀（不确定），画布中央的复盘卡片写明原因（点到必雷格／有必安格却点非必安格／前沿还有不确定格却点内陆格）以及触发它的数字限制（蓝色描边的数字格）；点棋盘关闭卡片，右上角 `Why` 可再次打开。
+- **提示**：`Hint +5s` 花 5 秒罚时显示一次全盘填色提示（绿=必安／红=必雷／琥珀=不确定），持续到下一次揭开格子；罚时计入实时计时和排行榜成绩。
+- **排行榜**：`Rank` 查看各难度前 10 名，并高亮当前昵称；底部 `NAME` 可输入昵称（最多 16 字符，自动保存）。
+- **多窗口**：`New Window` 打开独立进程的第二个窗口，适合同一台机器多人同时游玩；各窗口共享排行榜。
+- **布局**：默认窗口化（约 1020×780，小屏／高 DPI 自动收缩并居中），可任意缩放，最小 720×560，棋盘自动缩放。
+- **快捷键**：N 新局、M 切换模式、R 排行榜、1/2/3 切换难度、Esc 关闭排行榜。
+- **难度**：Easy 9×9/10、Mid 16×16/40、Hard 30×16/99。
+
+命令行参数：`--difficulty easy|medium|hard`、`--name NAME`、`--geometry WxH`。
+
+排行榜位置（可用环境变量 `GUESSLESS_DATA_DIR` 覆盖数据目录）：
+
+- Windows：`%APPDATA%\Guessless\leaderboard.json`
+- macOS：`~/Library/Application Support/Guessless/leaderboard.json`
+- Linux：`$XDG_DATA_HOME/guessless/leaderboard.json`（默认 `~/.local/share/guessless/leaderboard.json`）
+
+数据目录不可写时会回退到系统临时目录，并在排行榜窗口显示提示，不影响游戏。
+
+Guessless 的求解器在 Hard 盘面上偶尔需要枚举较久，此时 `MINES` 会显示转动的点、窗口保持响应，`New` 可随时放弃当前局。Windows 上官方 Python 自带 tkinter，无需额外安装；界面按系统 DPI 缩放，`New Window` 用 `pythonw` 启动且不弹出控制台。NixOS 的 devShell 已包含 `python314Packages.tkinter`，在 direnv／`nix develop` 环境中可直接运行。
