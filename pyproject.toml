@@ -7,7 +7,9 @@ authors = [
     { name = "KyvYang", email = "kyvyang@foxmail.com" }
 ]
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "pygame-ce>=2.5.8",
+]
 
 [project.scripts]
 guessless = "guessless:main"
