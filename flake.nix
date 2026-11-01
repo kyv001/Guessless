@@ -13,10 +13,17 @@
           uv
           python314Packages.tkinter
           fish
+          # for pygame
+          wayland
+          SDL2
+          libxkbcommon
+          libdecor
+          libglvnd
         ];
 
         shellHook = ''
-        echo "-- Entered DevShell --"
+          export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${pkgs.lib.makeLibraryPath (with pkgs; [ wayland libdecor libxkbcommon libglvnd ])}
+          echo "-- Entered DevShell --"
         '';
       };
     }) inputs.nixpkgs.legacyPackages;
