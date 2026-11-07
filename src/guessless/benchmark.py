@@ -40,11 +40,11 @@ def _benchmark(configuration: Configuration) -> BenchmarkResult:
                     result = (float("inf"), clicks)
                     break
                 if game.last_solve_result.must_be_safe:
-                    pos = random.choice(game.last_solve_result.must_be_safe)
+                    pos = random.choice([*game.last_solve_result.must_be_safe])
                     game.reveal_at(pos, skip_solve=True)
                     clicks += 1
                 elif game.last_solve_result.cannot_deter:
-                    pos = random.choice(game.last_solve_result.cannot_deter)
+                    pos = random.choice([*game.last_solve_result.cannot_deter])
                     game.reveal_at(pos, skip_solve=True)
                     clicks += 1
                 else:

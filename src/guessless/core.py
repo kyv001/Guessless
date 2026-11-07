@@ -17,32 +17,33 @@ class Position(NamedTuple):
     def is_adj(self, position: "Position") -> bool:
         return max((abs(position.x - self.x), abs(position.y - self.y))) == 1
 
-class Constraint(NamedTuple):
-    positions: list[Position]
+@dataclass
+class Constraint:
+    positions: set[Position]
     sum_mines: int
 
 class Solution(NamedTuple):
-    mine_positions: list[Position] # 边界中已确定的雷
+    mine_positions: set[Position] # 边界中已确定的雷
     n_extra_mines: int # 非边界位置剩下的雷
 
 class SolveResult:
-    def __init__(self, solved_positions: list[Position], unsolved_positions: list[Position], solutions: list[Solution]) -> None:
+    def __init__(self, solved_positions: set[Position], unsolved_positions: set[Position], solutions: list[Solution]) -> None:
         self.solved_positions = solved_positions # 已解出的边缘格
         self.unsolved_positions = unsolved_positions # 不确定的内陆格
         self.solutions = solutions
 
-        self.must_be_mine = [pos for pos in solved_positions if     all(pos in solution.mine_positions for solution in self.solutions)]
-        self.must_be_safe = [pos for pos in solved_positions if not any(pos in solution.mine_positions for solution in self.solutions)]
-        self.cannot_deter = [pos for pos in solved_positions if pos not in self.must_be_safe + self.must_be_mine]
+        self.must_be_mine = {pos for pos in solved_positions if     all(pos in solution.mine_positions for solution in self.solutions)}
+        self.must_be_safe = {pos for pos in solved_positions if not any(pos in solution.mine_positions for solution in self.solutions)}
+        self.cannot_deter = solved_positions - self.must_be_mine - self.must_be_safe
 
         if not max([solution.n_extra_mines for solution in solutions]): # 所有雷都在边上
-            self.must_be_safe.extend(unsolved_positions) # 那么所有非边缘的地方都是安全的
+            self.must_be_safe |= unsolved_positions # 那么所有非边缘的地方都是安全的
         elif min([solution.n_extra_mines for solution in solutions]) == len(unsolved_positions): # 所有非边缘的地方都是雷
-            self.must_be_mine.extend(unsolved_positions)
+            self.must_be_mine |= unsolved_positions
         else:
-            self.cannot_deter.extend(unsolved_positions) # 不能确定的非边缘格
+            self.cannot_deter |= unsolved_positions # 不能确定的非边缘格
 
-    def sample_safe_at(self, position: Position) -> list[Position]:
+    def sample_safe_at(self, position: Position) -> set[Position]:
         selected_solution = random.choice([solution for solution in self.solutions if position not in solution.mine_positions])
         solved_mines = selected_solution.mine_positions
         unsolved_mines = random.sample([
@@ -50,7 +51,7 @@ class SolveResult:
             for pos in self.unsolved_positions
             if pos != position
         ], k=selected_solution.n_extra_mines)
-        return solved_mines + unsolved_mines
+        return solved_mines.union(unsolved_mines)
 
 @dataclass
 class Cell:
@@ -90,7 +91,7 @@ class Minesweeper:
                 [pos for pos in self.board if pos not in [position, *self.enum_adj(position)]],
                 k=self.n_mines
             )
-            self.flood_by(position, init_mines)
+            self.flood_by(position, set(init_mines))
             return
         if self.state != GameState.RUNNING or self.get_at(position).flagged:
             return
@@ -135,31 +136,70 @@ class Minesweeper:
                 cell = self.get_at(idx)
                 if cell.revealed:
                     constraint_sum = cell.number
-                    constraint_positions: list[Position] = []
+                    constraint_positions: set[Position] = set()
                     for adj_pos in self.enum_adj(idx):
                         if not self.get_at(adj_pos).revealed:
                             edge_cells[adj_pos] = None
-                            constraint_positions.append(adj_pos)
+                            constraint_positions.add(adj_pos)
                     if constraint_positions:
                         constraints.append(Constraint(positions=constraint_positions, sum_mines=constraint_sum))
 
         if not edge_cells:
             return None
 
-        edge_positions = [*edge_cells.keys()]
-        non_edge_positions = [
+        edge_positions = {*edge_cells.keys()}
+        non_edge_positions = {
             pos for pos in self.board
             if not self.get_at(pos).revealed and
             pos not in edge_positions
-        ]
+        }
 
+        # --- 第一步：传播 ---
+        must_be_mine: set[Position] = set()
+        must_be_safe: set[Position] = set()
+        while True:
+            changed: bool = False
+            for constraint in [*constraints]:
+                if constraint.sum_mines == 0:
+                    must_be_safe.update(constraint.positions)
+                    constraints.remove(constraint)
+                    changed = True
+                elif constraint.sum_mines == len(constraint.positions):
+                    must_be_mine.update(constraint.positions)
+                    constraints.remove(constraint)
+                    changed = True
+
+            if not changed: break
+
+            for constraint in [*constraints]:
+                for pos in [*constraint.positions]:
+                    if pos in must_be_mine:
+                        constraint.positions.remove(pos)
+                        constraint.sum_mines -= 1
+                    elif pos in must_be_safe:
+                        constraint.positions.remove(pos)
+        solve_positions: list[Position] = list(edge_positions - must_be_mine - must_be_safe)
+
+        if not solve_positions: # 不需要回溯了
+            result = SolveResult(
+                solved_positions=edge_positions,
+                unsolved_positions=non_edge_positions,
+                solutions=[Solution(
+                    mine_positions=must_be_mine,
+                    n_extra_mines=self.n_mines - len(must_be_mine)
+                )]
+            )
+            self.last_solve_result = result
+            return result
+
+        # --- 第二步：回溯 ---
         solutions: list[Solution] = []
         stack: list[tuple[int, bool]] = [(0, True), (0, False)]
         while stack:
             idx, is_mine = stack.pop()
-            for pos in edge_positions[idx:]:
+            for pos in solve_positions[idx:]:
                 edge_cells[pos] = None # 回退掉之前的尝试
-            edge_cells[edge_positions[idx]] = is_mine
+            edge_cells[solve_positions[idx]] = is_mine
 
             for constraint in constraints:
                 actual_sum = 0
@@ -172,11 +212,11 @@ class Minesweeper:
                         break # 检查不通过
                 # 这一条检查通过，继续下一条
             else: # 每一条检查都通过了，可以继续
-                if idx >= len(edge_positions) - 1: # 没得继续了，这就是结果
-                    n_solution_mines = sum([bool(v) for k, v in edge_cells.items()])
+                if idx >= len(solve_positions) - 1: # 没得继续了，这就是结果
+                    n_solution_mines = sum([bool(v) for k, v in edge_cells.items()]) + len(must_be_mine)
                     if not (self.n_mines - len(non_edge_positions) <= n_solution_mines <= self.n_mines):
                         continue # 总数过多或者过少
-                    solutions.append(Solution([k for k, v in edge_cells.items() if v], self.n_mines - n_solution_mines))
+                    solutions.append(Solution({k for k, v in edge_cells.items() if v} | must_be_mine, self.n_mines - n_solution_mines))
                 else: # 还能继续，列举下一个格子
                     stack.extend([(idx + 1, True), (idx + 1, False)])
                     continue
@@ -195,21 +235,21 @@ class Minesweeper:
         return self.board[position]
 
     @staticmethod
-    def count_adj(center: Position, targets: list[Position]) -> int:
+    def count_adj(center: Position, targets: set[Position]) -> int:
         return sum(center.is_adj(target) for target in targets)
 
-    def enum_adj(self, center: Position) -> list[Position]:
-        adj_positions: list[Position] = []
+    def enum_adj(self, center: Position) -> set[Position]:
+        adj_positions: set[Position] = set()
         for dx, dy in [
             (-1, -1), ( 0, -1), ( 1, -1),
             (-1,  0),           ( 1,  0),
             (-1,  1), ( 0,  1), ( 1,  1)]:
             selected_pos = Position(center.x + dx, center.y + dy)
             if (0 <= selected_pos.x < self.size.w and 0 <= selected_pos.y < self.size.h):
-                adj_positions.append(selected_pos)
+                adj_positions.add(selected_pos)
         return adj_positions
 
-    def flood_by(self, origin: Position, mines: list[Position]):
+    def flood_by(self, origin: Position, mines: set[Position]):
         stack: list[Position] = [origin]
         while stack:
             pos = stack.pop()
