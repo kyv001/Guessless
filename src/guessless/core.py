@@ -37,6 +37,10 @@ class SolveResult:
 
         if not max([solution.n_extra_mines for solution in solutions]): # 所有雷都在边上
             self.must_be_safe.extend(unsolved_positions) # 那么所有非边缘的地方都是安全的
+        elif min([solution.n_extra_mines for solution in solutions]) == len(unsolved_positions): # 所有非边缘的地方都是雷
+            self.must_be_mine.extend(unsolved_positions)
+        else:
+            self.cannot_deter.extend(unsolved_positions) # 不能确定的非边缘格
 
     def sample_safe_at(self, position: Position) -> list[Position]:
         selected_solution = random.choice([solution for solution in self.solutions if position not in solution.mine_positions])
@@ -71,13 +75,14 @@ class Minesweeper:
         }
         self.state = GameState.NOTSTARTED
         self.t_start: float | None = None
+        self.last_solve_result: SolveResult | None = None
 
     def flag_at(self, position: Position) -> None:
         if self.state != GameState.RUNNING or self.get_at(position).revealed:
             return
         self.get_at(position).flagged ^= True
 
-    def reveal_at(self, position: Position) -> None:
+    def reveal_at(self, position: Position, skip_solve: bool = False) -> None:
         if self.state == GameState.NOTSTARTED:
             self.state = GameState.RUNNING
             self.t_start = time.time()
@@ -100,7 +105,10 @@ class Minesweeper:
                         self.reveal_at(pos)
             return
 
-        solve_result = self.solve()
+        if skip_solve and self.last_solve_result is not None:
+            solve_result = self.last_solve_result
+        else:
+            solve_result = self.solve()
         if solve_result is None:
             self.check_win()
             return
@@ -114,13 +122,9 @@ class Minesweeper:
             else: # 那就不准猜
                 self.state = GameState.LOST
         else: # 没有必定安全的地方
-            if solve_result.cannot_deter: # 边上还有能猜的地方
-                if position in solve_result.cannot_deter: # 那么必须猜中
-                    self.flood_by(position, solve_result.sample_safe_at(position))
-                else: # 如果边缘还有能猜的地方就不准往里猜
-                    self.state = GameState.LOST
-            else: # 边上都不安全，且没有点到边上
-                self.flood_by(position, solve_result.sample_safe_at(position))
+            if solve_result.cannot_deter and position in solve_result.cannot_deter: # 还有能猜的地方
+                self.flood_by(position, solve_result.sample_safe_at(position)) # 那么必须猜中
+        self.last_solve_result = None # 发生了状态改变，使缓存过期
 
     def solve(self) -> SolveResult | None:
         edge_cells: dict[Position, bool | None] = {}
@@ -177,7 +181,9 @@ class Minesweeper:
                     stack.extend([(idx + 1, True), (idx + 1, False)])
                     continue
 
-        return SolveResult(solved_positions=edge_positions, unsolved_positions=non_edge_positions, solutions=solutions)
+        result = SolveResult(solved_positions=edge_positions, unsolved_positions=non_edge_positions, solutions=solutions)
+        self.last_solve_result = result
+        return result
 
     def check_win(self):
         if self.state != GameState.RUNNING:
@@ -219,3 +225,15 @@ class Minesweeper:
                 if not self.get_at(next_pos).revealed:
                     stack.append(next_pos)
         self.check_win()
+
+__all__ = [
+    "Board",
+    "Cell",
+    "Constraint",
+    "GameState",
+    "Minesweeper",
+    "Position",
+    "Size",
+    "Solution",
+    "SolveResult"
+]
