@@ -20,10 +20,10 @@ def _timeout_handler(signum, frame):
     raise TimeoutError("Benchmark timed out")
 
 def _benchmark(configuration: Configuration) -> BenchmarkResult:
-    signal.signal(signal.SIGALRM, _timeout_handler)
-    signal.setitimer(signal.ITIMER_REAL, TIMEOUT)
     result: BenchmarkResult = (float("-inf"), 0)
+    signal.signal(signal.SIGALRM, _timeout_handler)
     try:
+        signal.setitimer(signal.ITIMER_REAL, TIMEOUT)
         t0 = time.perf_counter()
         game = Minesweeper(size=Size(*configuration[0]), n_mines=configuration[1])
         clicks = 0
@@ -50,7 +50,8 @@ def _benchmark(configuration: Configuration) -> BenchmarkResult:
                 else:
                     result = (float("inf"), clicks)
                     break
-        result = (time.perf_counter() - t0, clicks)
+        else:
+            result = (time.perf_counter() - t0, clicks)
     except TimeoutError:
         result = (float("-inf"), 0)
     finally:
@@ -58,6 +59,8 @@ def _benchmark(configuration: Configuration) -> BenchmarkResult:
     return result
 
 if __name__ == "__main__":
+    print("|configuration|mean|max|min|errs|timeouts|time per click|")
+    print("|---|---|---|---|---|---|---|")
     for configuration in configurations:
         with ProcessPoolExecutor(16) as ex:
             times = list(ex.map(_benchmark, [configuration] * 10))
@@ -68,6 +71,7 @@ if __name__ == "__main__":
             mean = sum(t[0] for t in normal_times) / len(normal_times)
             maximum = max(t[0] for t in normal_times)
             minimum = min(t[0] for t in normal_times)
+            time_per_click = sum(t[0] / t[1] for t in normal_times) / len(normal_times)
         else:
-            mean = maximum = minimum = float("nan")
-        print(f"{configuration}: mean={mean:.4f}s, max={maximum:.4f}s, min={minimum:.4f}s, errs={errs}/{len(times)}, timeouts={timeouts}/{len(times)}")
+            mean = maximum = minimum = time_per_click = float("nan")
+        print(f"|{configuration}|{mean:.3f}s|{maximum:.3f}s|{minimum:.3f}s|{errs}/10|{timeouts}/10|{time_per_click:.3f}s/click|")
