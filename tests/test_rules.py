@@ -100,18 +100,24 @@ def classify(game: Minesweeper, position: Position) -> str:
     if result is None or not result.solutions:
         raise AssertionError(f"局面没有可行配置，无法分类 {position}\n{render(game)}")
 
-    if position in frontier(game):
-        mine_sets = [set(solution.mine_positions) for solution in result.solutions]
-        if all(position in mines for mines in mine_sets):
-            return MUST_MINE
-        if not any(position in mines for mines in mine_sets):
-            return MUST_SAFE
-        return UNCERTAIN
+    # 每个解给出“position 能不能是雷 / 能不能安全”两个谓词，再对解集量化：
+    # 所有解都不允许是雷 → 一定安全；所有解都不允许安全 → 一定危险；否则不一定不安全。
+    # 内陆格是否可安全/可为雷取决于该解还有多少颗未定位的雷，不能只看 mine_positions。
+    inner = inland(game)
 
-    extra_mines = {solution.n_extra_mines for solution in result.solutions}
-    if extra_mines == {0}:
+    def can_be_mine(solution) -> bool:
+        return position in solution.mine_positions or (
+            position in inner and solution.n_extra_mines != 0
+        )
+
+    def can_be_safe(solution) -> bool:
+        return position not in solution.mine_positions and (
+            position not in inner or solution.n_extra_mines <= len(inner) - 1
+        )
+
+    if not any(can_be_mine(solution) for solution in result.solutions):
         return MUST_SAFE
-    if extra_mines == {len(inland(game))}:
+    if not any(can_be_safe(solution) for solution in result.solutions):
         return MUST_MINE
     return UNCERTAIN
 

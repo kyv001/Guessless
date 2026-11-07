@@ -23,34 +23,38 @@ class Constraint:
     sum_mines: int
 
 class Solution(NamedTuple):
-    mine_positions: set[Position] # 边界中已确定的雷
-    n_extra_mines: int # 非边界位置剩下的雷
+    mine_positions: set[Position] # 已确定的雷
+    n_extra_mines: int # 剩下不确定的雷
 
 class SolveResult:
     def __init__(self, solved_positions: set[Position], unsolved_positions: set[Position], solutions: list[Solution]) -> None:
-        self.solved_positions = solved_positions # 已解出的边缘格
+        self.solved_positions = solved_positions # 已解出的格
         self.unsolved_positions = unsolved_positions # 不确定的内陆格
-        self.solutions = solutions
+        all_positions = solved_positions | unsolved_positions
 
-        self.must_be_mine = {pos for pos in solved_positions if     all(pos in solution.mine_positions for solution in self.solutions)}
-        self.must_be_safe = {pos for pos in solved_positions if not any(pos in solution.mine_positions for solution in self.solutions)}
-        self.cannot_deter = solved_positions - self.must_be_mine - self.must_be_safe
+        self.solutions = [
+            Solution(solution.mine_positions | unsolved_positions, 0) if solution.n_extra_mines == len(unsolved_positions)
+            else solution
+            for solution in solutions
+        ]
 
-        if not max([solution.n_extra_mines for solution in solutions]): # 所有雷都在边上
-            self.must_be_safe |= unsolved_positions # 那么所有非边缘的地方都是安全的
-        elif min([solution.n_extra_mines for solution in solutions]) == len(unsolved_positions): # 所有非边缘的地方都是雷
-            self.must_be_mine |= unsolved_positions
-        else:
-            self.cannot_deter |= unsolved_positions # 不能确定的非边缘格
+        self.must_be_safe = {position for position in all_positions if not any(self.can_be_mine(position, solution) for solution in self.solutions)}
+        self.must_be_mine = {position for position in all_positions if not any(self.can_be_safe(position, solution) for solution in self.solutions)}
+        self.cannot_deter = all_positions - self.must_be_mine - self.must_be_safe
+
+    def can_be_safe(self, position: Position, solution: Solution) -> bool:
+        return position not in solution.mine_positions
+
+    def can_be_mine(self, position: Position, solution: Solution) -> bool:
+        return position in solution.mine_positions or (position in self.unsolved_positions and solution.n_extra_mines != 0)
 
     def sample_safe_at(self, position: Position) -> set[Position]:
-        selected_solution = random.choice([solution for solution in self.solutions if position not in solution.mine_positions])
+        selected_solution = random.choice([
+            solution for solution in self.solutions
+            if self.can_be_safe(position, solution)
+        ])
         solved_mines = selected_solution.mine_positions
-        unsolved_mines = random.sample([
-            pos
-            for pos in self.unsolved_positions
-            if pos != position
-        ], k=selected_solution.n_extra_mines)
+        unsolved_mines = random.sample(list(self.unsolved_positions - {position}), k=selected_solution.n_extra_mines)
         return solved_mines.union(unsolved_mines)
 
 @dataclass
@@ -178,7 +182,10 @@ class Minesweeper:
                         constraint.sum_mines -= 1
                     elif pos in must_be_safe:
                         constraint.positions.remove(pos)
-        solve_positions: list[Position] = list(edge_positions - must_be_mine - must_be_safe)
+        solve_positions: list[Position] = [
+            position for position in edge_cells
+            if position not in (must_be_mine | must_be_safe)
+        ]
 
         if not solve_positions: # 不需要回溯了
             result = SolveResult(
