@@ -63,7 +63,7 @@ if __name__ == "__main__":
     print("|configuration|mean|max|min|errs|timeouts|time per click|")
     print("|---|---|---|---|---|---|---|")
     for configuration in configurations:
-        with ProcessPoolExecutor(16) as ex:
+        with ProcessPoolExecutor(8) as ex:
             times = list(ex.map(_benchmark, [configuration] * BATCH_SIZE))
         errs = sum(1 for t in times if t[0] == float("inf"))
         timeouts = sum(1 for t in times if t[0] == float("-inf"))

@@ -2,6 +2,7 @@ import random
 import time
 from dataclasses import dataclass
 from enum import Enum
+from itertools import product
 from typing import NamedTuple
 
 type Board = dict[Position, Cell]
@@ -69,6 +70,11 @@ class GameState(Enum):
     WON = 2
     LOST = 3
 
+@dataclass # 不是NamedTuple因为不修改地创建很麻烦
+class Component:
+    positions: list[Position] # 保持顺序以利用扫雷空间局部性
+    constraints: list[Constraint]
+
 class Minesweeper:
     def __init__(self, size: Size, n_mines: int) -> None:
         self.size = size
@@ -81,6 +87,8 @@ class Minesweeper:
         self.state = GameState.NOTSTARTED
         self.t_start: float | None = None
         self.last_solve_result: SolveResult | None = None
+        self.must_be_mine: set[Position] = set()
+        self.must_be_safe: set[Position] = set()
 
     def flag_at(self, position: Position) -> None:
         if self.state != GameState.RUNNING or self.get_at(position).revealed:
@@ -132,7 +140,7 @@ class Minesweeper:
         self.last_solve_result = None # 发生了状态改变，使缓存过期
 
     def solve(self) -> SolveResult | None:
-        edge_cells: dict[Position, bool | None] = {}
+        edge_positions: list[Position] = [] # 保持顺序以利用扫雷空间局部性
         constraints: list[Constraint] = []
         for y in range(self.size.h):
             for x in range(self.size.w):
@@ -143,15 +151,15 @@ class Minesweeper:
                     constraint_positions: set[Position] = set()
                     for adj_pos in self.enum_adj(idx):
                         if not self.get_at(adj_pos).revealed:
-                            edge_cells[adj_pos] = None
+                            if adj_pos not in edge_positions:
+                                edge_positions.append(adj_pos)
                             constraint_positions.add(adj_pos)
                     if constraint_positions:
                         constraints.append(Constraint(positions=constraint_positions, sum_mines=constraint_sum))
 
-        if not edge_cells:
+        if not edge_positions:
             return None
 
-        edge_positions = {*edge_cells.keys()}
         non_edge_positions = {
             pos for pos in self.board
             if not self.get_at(pos).revealed and
@@ -159,8 +167,6 @@ class Minesweeper:
         }
 
         # --- 第一步：传播 ---
-        must_be_mine: set[Position] = set()
-        must_be_safe: set[Position] = set()
         while True:
             changed: bool = False
             # 1. 消元
@@ -178,78 +184,124 @@ class Minesweeper:
             # 2. 可直接得出结论的约束
             for constraint in [*constraints]:
                 if constraint.sum_mines == 0:
-                    must_be_safe.update(constraint.positions)
+                    self.must_be_safe.update(constraint.positions)
                     constraints.remove(constraint)
                     changed = True
                 elif constraint.sum_mines == len(constraint.positions):
-                    must_be_mine.update(constraint.positions)
+                    self.must_be_mine.update(constraint.positions)
                     constraints.remove(constraint)
                     changed = True
 
             # 3. 结论传播给其他约束
             for constraint in constraints:
                 for pos in [*constraint.positions]:
-                    if pos in must_be_mine:
+                    if pos in self.must_be_mine:
                         constraint.positions.remove(pos)
                         constraint.sum_mines -= 1
                         changed = True
-                    elif pos in must_be_safe:
+                    elif pos in self.must_be_safe:
                         constraint.positions.remove(pos)
                         changed = True
 
             if not changed: break
 
         solve_positions: list[Position] = [
-            position for position in edge_cells
-            if position not in (must_be_mine | must_be_safe)
+            position for position in edge_positions
+            if position not in (self.must_be_mine | self.must_be_safe)
         ] # 此处必须保留原始扫描顺序：扫描顺序把同一个约束的格子放在一起，让剪枝可行
 
         if not solve_positions: # 不需要回溯了
             result = SolveResult(
-                solved_positions=edge_positions,
+                solved_positions={*edge_positions},
                 unsolved_positions=non_edge_positions,
                 solutions=[Solution(
-                    mine_positions=must_be_mine,
-                    n_extra_mines=self.n_mines - len(must_be_mine)
+                    mine_positions=self.must_be_mine,
+                    n_extra_mines=self.n_mines - len(self.must_be_mine)
                 )]
             )
             self.last_solve_result = result
             return result
 
+        # --- 第二步：分量分解 ---
+        parents: dict[Position, Position] = {position: position for position in solve_positions}
+        sizes: dict[Position, int] = {position: 1 for position in solve_positions}
+
+        def find(position: Position) -> Position:
+            root = position
+            while parents[root] != root:
+                root = parents[root]
+            while parents[position] != position:
+                parents[position], position = root, parents[position]
+            return root
+
+        for constraint in constraints:
+            positions_iter = iter(constraint.positions)
+            a = next(positions_iter)
+            ra = find(a)
+            for b in positions_iter:
+                rb = find(b)
+                if sizes[ra] < sizes[rb]:
+                    ra, rb = rb, ra
+                parents[rb] = ra
+                sizes[ra] += sizes[rb]
+
+        position_components: dict[Position, Component] = {}
+        for position in solve_positions:
+            root = find(position)
+            if root not in position_components:
+                position_components[root] = Component([position], [])
+            else:
+                position_components[root].positions.append(position)
+        for constraint in constraints:
+            root = find(next(iter(constraint.positions)))
+            position_components[root].constraints.append(constraint)
+        components = [*position_components.values()]
+
         # --- 第二步：回溯 ---
-        solutions: list[Solution] = []
-        stack: list[tuple[int, bool]] = [(0, True), (0, False)]
-        while stack:
-            idx, is_mine = stack.pop()
-            for pos in solve_positions[idx:]:
-                edge_cells[pos] = None # 回退掉之前的尝试
-            edge_cells[solve_positions[idx]] = is_mine
+        component_solutions: list[list[set[Position]]] = []
+        for component in components:
+            solutions: list[set[Position]] = []
+            stack: list[tuple[int, bool]] = [(0, True), (0, False)]
+            component_cells: dict[Position, bool | None] = {position: None for position in component.positions}
+            while stack:
+                idx, is_mine = stack.pop()
+                for pos in component.positions[idx:]:
+                    component_cells[pos] = None # 回退掉之前的尝试
+                component_cells[component.positions[idx]] = is_mine
 
-            for constraint in constraints:
-                finished = True
-                actual_sum = 0
-                for pos in constraint.positions:
-                    if edge_cells[pos] is None:
-                        finished = False # 这条限制还有空没填
-                    actual_sum += bool(edge_cells[pos])
-                    if actual_sum > constraint.sum_mines:
-                        break # 无论是否有没填完都已经超过了
-                else: # 还没超过
-                    if finished and actual_sum < constraint.sum_mines: # 填完了仍然不足
-                        break
-                    continue # 这一条检查通过，继续下一条
-                break # 超过了，检查不通过
-            else: # 每一条检查都通过了，可以继续
-                if idx >= len(solve_positions) - 1: # 没得继续了，这就是结果
-                    n_solution_mines = sum([bool(v) for k, v in edge_cells.items()]) + len(must_be_mine)
-                    if not (self.n_mines - len(non_edge_positions) <= n_solution_mines <= self.n_mines):
-                        continue # 总数过多或者过少
-                    solutions.append(Solution({k for k, v in edge_cells.items() if v} | must_be_mine, self.n_mines - n_solution_mines))
-                else: # 还能继续，列举下一个格子
-                    stack.extend([(idx + 1, True), (idx + 1, False)])
-                    continue
+                for constraint in component.constraints:
+                    finished = True
+                    actual_sum = 0
+                    for pos in constraint.positions:
+                        if component_cells[pos] is None:
+                            finished = False # 这条限制还有空没填
+                        actual_sum += bool(component_cells[pos])
+                        if actual_sum > constraint.sum_mines:
+                            break # 无论是否有没填完都已经超过了
+                    else: # 还没超过
+                        if finished and actual_sum < constraint.sum_mines: # 填完了仍然不足
+                            break
+                        continue # 这一条检查通过，继续下一条
+                    break # 超过了，检查不通过
+                else: # 每一条检查都通过了，可以继续
+                    if idx >= len(component.positions) - 1: # 没得继续了，这就是结果
+                        solutions.append({k for k, v in component_cells.items() if v})
+                    else: # 还能继续，列举下一个格子
+                        stack.extend([(idx + 1, True), (idx + 1, False)])
+                        continue
+            component_solutions.append(solutions)
 
-        result = SolveResult(solved_positions=edge_positions, unsolved_positions=non_edge_positions, solutions=solutions)
+        # --- 第三步：汇总 ---
+        global_solutions: list[Solution] = []
+        for combination in product(*component_solutions):
+            total_mines = sum(len(mines) for mines in combination) + len(self.must_be_mine)
+            if self.n_mines >= total_mines >= self.n_mines - len(non_edge_positions):
+                global_solutions.append(Solution(
+                    set().union(*combination) | self.must_be_mine,
+                    self.n_mines - total_mines
+                ))
+
+        result = SolveResult(solved_positions={*edge_positions}, unsolved_positions=non_edge_positions, solutions=global_solutions)
         self.last_solve_result = result
         return result
 
