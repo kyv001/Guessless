@@ -163,6 +163,19 @@ class Minesweeper:
         must_be_safe: set[Position] = set()
         while True:
             changed: bool = False
+            # 1. 消元
+            for i, constraint_a in enumerate(constraints):
+                for constraint_b in constraints[i:]:
+                    if constraint_b.positions > constraint_a.positions:
+                        constraint_b.positions -= constraint_a.positions
+                        constraint_b.sum_mines -= constraint_a.sum_mines
+                        changed = True
+                    elif constraint_a.positions > constraint_b.positions:
+                        constraint_a.positions -= constraint_b.positions
+                        constraint_a.sum_mines -= constraint_b.sum_mines
+                        changed = True
+
+            # 2. 可直接得出结论的约束
             for constraint in [*constraints]:
                 if constraint.sum_mines == 0:
                     must_be_safe.update(constraint.positions)
@@ -173,19 +186,23 @@ class Minesweeper:
                     constraints.remove(constraint)
                     changed = True
 
-            if not changed: break
-
-            for constraint in [*constraints]:
+            # 3. 结论传播给其他约束
+            for constraint in constraints:
                 for pos in [*constraint.positions]:
                     if pos in must_be_mine:
                         constraint.positions.remove(pos)
                         constraint.sum_mines -= 1
+                        changed = True
                     elif pos in must_be_safe:
                         constraint.positions.remove(pos)
+                        changed = True
+
+            if not changed: break
+
         solve_positions: list[Position] = [
             position for position in edge_cells
             if position not in (must_be_mine | must_be_safe)
-        ]
+        ] # 此处必须保留原始扫描顺序：扫描顺序把同一个约束的格子放在一起，让剪枝可行
 
         if not solve_positions: # 不需要回溯了
             result = SolveResult(
@@ -209,15 +226,19 @@ class Minesweeper:
             edge_cells[solve_positions[idx]] = is_mine
 
             for constraint in constraints:
+                finished = True
                 actual_sum = 0
                 for pos in constraint.positions:
                     if edge_cells[pos] is None:
-                        break # 这条限制还有空没填，还不能检查
+                        finished = False # 这条限制还有空没填
                     actual_sum += bool(edge_cells[pos])
-                else: # 这条限制没有空没填，可以检查
-                    if actual_sum != constraint.sum_mines:
-                        break # 检查不通过
-                # 这一条检查通过，继续下一条
+                    if actual_sum > constraint.sum_mines:
+                        break # 无论是否有没填完都已经超过了
+                else: # 还没超过
+                    if finished and actual_sum < constraint.sum_mines: # 填完了仍然不足
+                        break
+                    continue # 这一条检查通过，继续下一条
+                break # 超过了，检查不通过
             else: # 每一条检查都通过了，可以继续
                 if idx >= len(solve_positions) - 1: # 没得继续了，这就是结果
                     n_solution_mines = sum([bool(v) for k, v in edge_cells.items()]) + len(must_be_mine)

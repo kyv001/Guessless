@@ -9,6 +9,7 @@ type Configuration = tuple[tuple[int, int], int]  # ((width, height), n_mines)
 type BenchmarkResult = tuple[float, int]  # (time, clicks)
 
 TIMEOUT = 60 # seconds
+BATCH_SIZE = 64
 
 configurations = [
     ((9, 9), 10),
@@ -63,7 +64,7 @@ if __name__ == "__main__":
     print("|---|---|---|---|---|---|---|")
     for configuration in configurations:
         with ProcessPoolExecutor(16) as ex:
-            times = list(ex.map(_benchmark, [configuration] * 10))
+            times = list(ex.map(_benchmark, [configuration] * BATCH_SIZE))
         errs = sum(1 for t in times if t[0] == float("inf"))
         timeouts = sum(1 for t in times if t[0] == float("-inf"))
         normal_times = [t for t in times if t[0] not in (float("inf"), float("-inf"))]
@@ -74,4 +75,4 @@ if __name__ == "__main__":
             time_per_click = sum(t[0] / t[1] for t in normal_times) / len(normal_times)
         else:
             mean = maximum = minimum = time_per_click = float("nan")
-        print(f"|{configuration}|{mean:.3f}s|{maximum:.3f}s|{minimum:.3f}s|{errs}/10|{timeouts}/10|{time_per_click:.3f}s/click|")
+        print(f"|{configuration}|{mean:.3f}s|{maximum:.3f}s|{minimum:.3f}s|{errs}/{BATCH_SIZE}|{timeouts}/{BATCH_SIZE}|{time_per_click:.3f}s/click|")
