@@ -303,6 +303,8 @@ class Minesweeper:
 
         result = SolveResult(solved_positions={*edge_positions}, unsolved_positions=non_edge_positions, solutions=global_solutions)
         self.last_solve_result = result
+        self.must_be_mine.update(result.must_be_mine)
+        self.must_be_safe.update(result.must_be_safe)
         return result
 
     def check_win(self):
