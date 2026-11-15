@@ -1,8 +1,8 @@
+from collections import defaultdict
 import random
 import time
 from dataclasses import dataclass
 from enum import Enum
-from itertools import product
 from typing import NamedTuple
 
 type Board = dict[Position, Cell]
@@ -27,36 +27,99 @@ class Solution(NamedTuple):
     mine_positions: set[Position] # 已确定的雷
     n_extra_mines: int # 剩下不确定的雷
 
+class SolveAttempt(NamedTuple):
+    idx: int
+    value: bool
+    finished: bool
+
+class SolveState(NamedTuple):
+    idx: int # 当前填的格子
+    constraints_state: tuple[int, ...]
+
+class SolveNode(NamedTuple):
+    #       从此以后的雷数：有此雷数的解数量
+    n_mines_dist: dict[int, int] # 用于指导“按特定雷数采样”
+    #     从此以后的雷数：{位置：此处有雷的解数量}
+    pos_mines_dist: dict[int, dict[int, int]] # 用于统计 must_be_*
+
+    def next_node(self, idx: int, is_mine: bool, n_cells: int):
+        n_mines_dist = {k + is_mine: v for k, v in self.n_mines_dist.items()}
+        pos_mines_dist = {
+            k + is_mine: {
+                p: v if p == idx else self.pos_mines_dist[k][p]
+                for p in range(idx, n_cells)
+                if p in self.pos_mines_dist.get(k, {}) or (is_mine and p == idx)
+            }
+            for k, v in self.n_mines_dist.items()
+        }
+        return SolveNode(n_mines_dist, pos_mines_dist)
+
+    def __add__(self, b):
+        node = SolveNode(defaultdict(int), defaultdict(lambda: defaultdict(int)))
+        for k, v in self.n_mines_dist.items():
+            node.n_mines_dist[k] += v
+        for k, v in b.n_mines_dist.items():
+            node.n_mines_dist[k] += v
+        for k, d in self.pos_mines_dist.items():
+            for p, v in d.items():
+                node.pos_mines_dist[k][p] += v
+        for k, d in b.pos_mines_dist.items():
+            for p, v in d.items():
+                node.pos_mines_dist[k][p] += v
+        return node
+
+type Table = dict[SolveState, SolveNode]
+
+@dataclass # 不是NamedTuple因为不修改地创建很麻烦
+class Component:
+    positions: list[Position] # 保持顺序以利用扫雷空间局部性
+    constraints: list[Constraint]
+
+class ComponentResult(NamedTuple):
+    component: Component
+    table: Table
+
 class SolveResult:
-    def __init__(self, solved_positions: set[Position], unsolved_positions: set[Position], solutions: list[Solution]) -> None:
-        self.solved_positions = solved_positions # 已解出的格
-        self.unsolved_positions = unsolved_positions # 不确定的内陆格
-        all_positions = solved_positions | unsolved_positions
+    def __init__(self, total_mines: int, solved_positions: set[Position], unsolved_positions: set[Position],
+                component_results: list[ComponentResult] | None, must_be_safe: set[Position] | None = None,
+                must_be_mine: set[Position] | None = None) -> None:
+        self.all_positions = solved_positions | unsolved_positions
+        self.must_be_mine = (must_be_mine or set()) & self.all_positions
+        self.must_be_safe = (must_be_safe or set()) & self.all_positions
+        self.solved_positions = solved_positions
+        self.unsolved_positions = unsolved_positions
+        self.compoent_results = component_results
+        self.total_mines = total_mines
 
-        self.solutions = [
-            Solution(solution.mine_positions | unsolved_positions, 0) if solution.n_extra_mines == len(unsolved_positions)
-            else solution
-            for solution in solutions
-        ]
+        min_mines = 0
+        max_mines = 0
+        if component_results:
+            for cr in component_results:
+                self.must_be_safe.update(
+                    cr.component.positions[idx] for idx in range(len(cr.component.positions))
+                    if not any(
+                        d.get(idx, 0) != 0
+                        for d in cr.table[SolveState(-1, ())].pos_mines_dist.values()
+                    )
+                )
+                num_component_solutions = sum(cr.table[SolveState(-1, ())].n_mines_dist.values())
+                min_mines += min(cr.table[SolveState(-1, ())].n_mines_dist.values())
+                max_mines += max(cr.table[SolveState(-1, ())].n_mines_dist.values())
+                self.must_be_mine.update(
+                    cr.component.positions[idx] for idx in range(len(cr.component.positions))
+                    if sum(
+                        d.get(idx, 0) for d in cr.table[SolveState(-1, ())].pos_mines_dist.values()
+                    ) == num_component_solutions
+                )
 
-        self.must_be_safe = {position for position in all_positions if not any(self.can_be_mine(position, solution) for solution in self.solutions)}
-        self.must_be_mine = {position for position in all_positions if not any(self.can_be_safe(position, solution) for solution in self.solutions)}
-        self.cannot_deter = all_positions - self.must_be_mine - self.must_be_safe
-
-    def can_be_safe(self, position: Position, solution: Solution) -> bool:
-        return position not in solution.mine_positions
-
-    def can_be_mine(self, position: Position, solution: Solution) -> bool:
-        return position in solution.mine_positions or (position in self.unsolved_positions and solution.n_extra_mines != 0)
+        if len(self.must_be_mine) == total_mines:
+            self.must_be_safe.update(self.all_positions - self.must_be_mine)
+        if len(self.unsolved_positions | self.solved_positions) - len(self.must_be_safe) == total_mines:
+            self.must_be_mine.update(self.all_positions - self.must_be_safe)
+        self.cannot_deter = self.all_positions - self.must_be_mine - self.must_be_safe
 
     def sample_safe_at(self, position: Position) -> set[Position]:
-        selected_solution = random.choice([
-            solution for solution in self.solutions
-            if self.can_be_safe(position, solution)
-        ])
-        solved_mines = selected_solution.mine_positions
-        unsolved_mines = random.sample(list(self.unsolved_positions - {position}), k=selected_solution.n_extra_mines)
-        return solved_mines.union(unsolved_mines)
+        raise NotImplementedError
 
 @dataclass
 class Cell:
@@ -69,11 +132,6 @@ class GameState(Enum):
     RUNNING = 1
     WON = 2
     LOST = 3
-
-@dataclass # 不是NamedTuple因为不修改地创建很麻烦
-class Component:
-    positions: list[Position] # 保持顺序以利用扫雷空间局部性
-    constraints: list[Constraint]
 
 class Minesweeper:
     def __init__(self, size: Size, n_mines: int) -> None:
@@ -212,12 +270,12 @@ class Minesweeper:
 
         if not solve_positions: # 不需要回溯了
             result = SolveResult(
+                total_mines=self.n_mines,
                 solved_positions={*edge_positions},
                 unsolved_positions=non_edge_positions,
-                solutions=[Solution(
-                    mine_positions=self.must_be_mine,
-                    n_extra_mines=self.n_mines - len(self.must_be_mine)
-                )]
+                component_results=None,
+                must_be_mine=self.must_be_mine,
+                must_be_safe=self.must_be_safe
             )
             self.last_solve_result = result
             return result
@@ -257,52 +315,84 @@ class Minesweeper:
             position_components[root].constraints.append(constraint)
         components = [*position_components.values()]
 
-        # --- 第二步：回溯 ---
-        component_solutions: list[list[set[Position]]] = []
+        # --- 第三步：回溯 ---
+        component_results: list[ComponentResult] = []
+
         for component in components:
-            solutions: list[set[Position]] = []
-            stack: list[tuple[int, bool]] = [(0, True), (0, False)]
+            stack: list[SolveAttempt] = [SolveAttempt(0, True, False), SolveAttempt(0, False, False)]
+            node_stack: list[SolveNode] = [SolveNode({}, {})]
             component_cells: dict[Position, bool | None] = {position: None for position in component.positions}
+            active_constraints: list[list[Constraint]] = [[] for _ in component.positions]
+            for constraint in component.constraints:
+                indexes = [component.positions.index(position) for position in constraint.positions]
+                for idx in range(min(indexes), max(indexes) + 1):
+                    active_constraints[idx].append(constraint)
+            table: Table = defaultdict(lambda: SolveNode(defaultdict(int), defaultdict(lambda: defaultdict(int))))
             while stack:
-                idx, is_mine = stack.pop()
-                for pos in component.positions[idx:]:
-                    component_cells[pos] = None # 回退掉之前的尝试
+                idx, is_mine, finished = stack.pop()
                 component_cells[component.positions[idx]] = is_mine
 
-                for constraint in component.constraints:
-                    finished = True
+                constraints_state = tuple(
+                    sum(1 for pos in constraint.positions if component_cells[pos])
+                    for constraint in active_constraints[idx]
+                )
+                state = SolveState(idx, constraints_state)
+
+                if finished:
+                    current = node_stack.pop()
+                    table[state] = current
+                    father = node_stack.pop()
+                    node_stack.append(father + current.next_node(idx, is_mine, len(component_cells)))
+                    component_cells[component.positions[idx]] = None # 回溯前清理
+                    continue
+
+                if state in table:
+                    current = table[state]
+                    father = node_stack.pop()
+                    node_stack.append(father + current.next_node(idx, is_mine, len(component_cells)))
+                    component_cells[component.positions[idx]] = None # 回溯前清理
+                    continue
+
+                for constraint in active_constraints[idx]:
+                    unfinished_sum = 0
                     actual_sum = 0
-                    for pos in constraint.positions:
+                    constraint_size = len(constraint.positions)
+                    for i, pos in enumerate(constraint.positions):
                         if component_cells[pos] is None:
-                            finished = False # 这条限制还有空没填
+                            unfinished_sum += 1 # 这条限制还有空没填
                         actual_sum += bool(component_cells[pos])
                         if actual_sum > constraint.sum_mines:
                             break # 无论是否有没填完都已经超过了
-                    else: # 还没超过
-                        if finished and actual_sum < constraint.sum_mines: # 填完了仍然不足
-                            break
+                        if i + 1 - actual_sum - unfinished_sum > constraint_size - constraint.sum_mines:
+                            break # 即使剩下的全部填满都不可能够
+                    else:
                         continue # 这一条检查通过，继续下一条
-                    break # 超过了，检查不通过
+                    component_cells[component.positions[idx]] = None
+                    break # 检查不通过，回到上一分支
                 else: # 每一条检查都通过了，可以继续
-                    if idx >= len(component.positions) - 1: # 没得继续了，这就是结果
-                        solutions.append({k for k, v in component_cells.items() if v})
+                    if idx >= len(component.positions) - 1: # 没得继续了
+                        current = SolveNode({0: 1}, {})
+                        table[state] = current
+                        father = node_stack.pop()
+                        node_stack.append(father + current.next_node(idx, is_mine, len(component_cells)))
+                        component_cells[component.positions[idx]] = None # 回溯前清理
                     else: # 还能继续，列举下一个格子
-                        stack.extend([(idx + 1, True), (idx + 1, False)])
-                        continue
-            component_solutions.append(solutions)
+                        node_stack.append(SolveNode({}, {}))
+                        stack.extend([SolveAttempt(idx, is_mine, True), SolveAttempt(idx + 1, True, False), SolveAttempt(idx + 1, False, False)])
+            table[SolveState(-1, ())] = node_stack[0]
+            component_results.append(ComponentResult(component, table))
 
-        # --- 第三步：汇总 ---
-        global_solutions: list[Solution] = []
-        for combination in product(*component_solutions):
-            total_mines = sum(len(mines) for mines in combination) + len(self.must_be_mine)
-            if self.n_mines >= total_mines >= self.n_mines - len(non_edge_positions):
-                global_solutions.append(Solution(
-                    set().union(*combination) | self.must_be_mine,
-                    self.n_mines - total_mines
-                ))
-
-        result = SolveResult(solved_positions={*edge_positions}, unsolved_positions=non_edge_positions, solutions=global_solutions)
+        result = SolveResult(
+            total_mines=self.n_mines,
+            solved_positions={*edge_positions},
+            unsolved_positions=non_edge_positions,
+            component_results=component_results,
+            must_be_mine=self.must_be_mine,
+            must_be_safe=self.must_be_safe
+        )
         self.last_solve_result = result
+        self.must_be_mine.update(result.must_be_mine)
+        self.must_be_safe.update(result.must_be_safe)
         return result
 
     def check_win(self):
