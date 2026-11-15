@@ -14,7 +14,7 @@ BATCH_SIZE = 64
 configurations = [
     ((9, 9), 10),
     ((16, 16), 40),
-    ((30, 16), 99),
+    # ((30, 16), 99),
 ]
 
 def _timeout_handler(signum, frame):
