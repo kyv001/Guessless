@@ -150,10 +150,7 @@ def loss_reason(result: SolveResult, position: Position) -> str:
 def classify_hidden(game: Minesweeper, result: SolveResult) -> dict[Position, str]:
     """把所有仍未翻开的格子分成 安全 / 必雷 / 不确定 三类。"""
     must_mine, must_safe = set(result.must_be_mine), set(result.must_be_safe)
-    cannot_deter, inland = set(result.cannot_deter), set(result.unsolved_positions)
-    extras = [solution.n_extra_mines for solution in result.solutions]
-    inland_safe = bool(extras) and max(extras) == 0
-    inland_mine = bool(extras) and bool(inland) and min(extras) == len(inland)
+    cannot_deter = set(result.cannot_deter)
     labels: dict[Position, str] = {}
     for position, cell in game.board.items():
         if cell.revealed:
@@ -164,8 +161,6 @@ def classify_hidden(game: Minesweeper, result: SolveResult) -> dict[Position, st
             labels[position] = "safe"
         elif position in cannot_deter:
             labels[position] = "uncertain"
-        elif position in inland:
-            labels[position] = "safe" if inland_safe else "mine" if inland_mine else "uncertain"
         else:
             labels[position] = "uncertain"
     return labels
@@ -191,7 +186,7 @@ def analyse_loss(game: Minesweeper,
     if decision is None:
         return None
     position, result = decision
-    if result is None or not result.solutions:
+    if result is None or result.total_valid == 0:
         return None
     reason = loss_reason(result, position)
     labels = classify_hidden(game, result)
@@ -205,7 +200,7 @@ def analyse_loss(game: Minesweeper,
         safe_count=sum(value == "safe" for value in labels.values()),
         mine_count=sum(value == "mine" for value in labels.values()),
         uncertain_count=sum(value == "uncertain" for value in labels.values()),
-        solutions=len(result.solutions),
+        solutions=result.total_valid,
         total_mines=game.n_mines,
         constraints=constraints,
         decisive=decisive,
